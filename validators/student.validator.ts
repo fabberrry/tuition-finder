@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 const id = z.uuid()
-const phone = z.string().trim().regex(/^\+?[0-9][0-9\s-]{6,19}$/, 'Invalid contact phone')
+const phone = z.string().trim().max(20).regex(/^\+?[0-9][0-9\s-]{6,19}$/, 'Invalid contact phone')
 const rating = z.number().int().min(1).max(5)
 
 export const profileSchema = z.object({

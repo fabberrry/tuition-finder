@@ -44,7 +44,7 @@ export async function searchCenters(input: SearchInput) {
       ${distance} AS distance_km,COALESCE(r.average_rating,0) AS average_rating,
       COALESCE(r.total_reviews,0) AS total_reviews
     FROM centers c JOIN batches b ON b.center_id=c.id AND b.status='active'
-    JOIN teachers t ON t.id=b.teacher_id AND t.verification_status='approved'
+    JOIN teachers t ON t.id=b.teacher_id AND t.center_id=b.center_id AND t.verification_status='approved'
     JOIN subjects s ON s.id=b.subject_id LEFT JOIN ratings r ON r.center_id=c.id
     WHERE ${where.join(' AND ')} AND COALESCE(r.average_rating,0)>=${rating}
   ), ranked AS (
@@ -66,11 +66,11 @@ export async function getCenterProfile(centerId: string) {
       LEFT JOIN subjects s ON s.id=ts.subject_id WHERE t.center_id=$1 AND t.verification_status='approved'
       GROUP BY t.id`, [centerId]),
     rows(`SELECT b.*,b.capacity-b.filled_seats AS vacant_seats,s.name AS subject,t.name AS teacher_name
-      FROM batches b JOIN subjects s ON s.id=b.subject_id JOIN teachers t ON t.id=b.teacher_id
+      FROM batches b JOIN subjects s ON s.id=b.subject_id JOIN teachers t ON t.id=b.teacher_id AND t.center_id=b.center_id
       WHERE b.center_id=$1 AND b.status='active' AND t.verification_status='approved' ORDER BY b.start_time`, [centerId]),
     rows(`SELECT v.id,v.teacher_id,v.subject_id,v.title,v.topic,v.video_url,v.duration_seconds,v.language,
       t.name AS teacher_name,s.name AS subject FROM demo_videos v
-      JOIN teachers t ON t.id=v.teacher_id AND t.verification_status='approved'
+      JOIN teachers t ON t.id=v.teacher_id AND t.center_id=v.center_id AND t.verification_status='approved'
       JOIN subjects s ON s.id=v.subject_id WHERE v.center_id=$1 AND v.approval_status='approved'`, [centerId]),
     rows(`SELECT r.id,r.rating,r.review_text,r.teaching_clarity_rating,r.doubt_solving_rating,
       r.environment_rating,r.value_for_money_rating,r.created_at,u.full_name AS reviewer
@@ -104,7 +104,7 @@ export async function getApprovedVideo(videoId: string) {
   const video = await one(`SELECT v.id,v.center_id,v.teacher_id,v.subject_id,v.title,v.topic,v.video_url,
     v.duration_seconds,v.language,v.uploaded_at,t.name AS teacher_name,s.name AS subject
     FROM demo_videos v JOIN centers c ON c.id=v.center_id
-    JOIN teachers t ON t.id=v.teacher_id JOIN subjects s ON s.id=v.subject_id
+    JOIN teachers t ON t.id=v.teacher_id AND t.center_id=c.id JOIN subjects s ON s.id=v.subject_id
     WHERE v.id=$1 AND v.approval_status='approved' AND t.verification_status='approved'
     AND c.verification_status='approved' AND c.listing_status='active'`, [videoId])
   if (!video) throw new ApiError(404, 'Demo video not found')
