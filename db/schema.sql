@@ -9,6 +9,17 @@ CREATE TABLE IF NOT EXISTS users (
   status varchar(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended')),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS student_profiles (
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  class_level varchar(20), board varchar(50), exam_goal varchar(100),
+  preferred_budget_min int CHECK (preferred_budget_min >= 0),
+  preferred_budget_max int CHECK (preferred_budget_max >= 0),
+  preferred_mode varchar(20) CHECK (preferred_mode IN ('online','offline','hybrid')),
+  latitude double precision CHECK (latitude BETWEEN -90 AND 90),
+  longitude double precision CHECK (longitude BETWEEN -180 AND 180),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (preferred_budget_min IS NULL OR preferred_budget_max IS NULL OR preferred_budget_min <= preferred_budget_max)
+);
 CREATE TABLE IF NOT EXISTS centers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_id uuid NOT NULL REFERENCES users(id),
@@ -93,10 +104,12 @@ CREATE TABLE IF NOT EXISTS demo_bookings (
   center_id uuid NOT NULL REFERENCES centers(id),
   batch_id uuid NOT NULL, teacher_id uuid NOT NULL REFERENCES teachers(id),
   booking_time timestamptz NOT NULL,
+  contact_phone varchar(20),
   status varchar(20) NOT NULL DEFAULT 'booked' CHECK (status IN ('booked','cancelled','attended','no_show')),
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (batch_id, center_id) REFERENCES batches(id, center_id)
 );
+ALTER TABLE demo_bookings ADD COLUMN IF NOT EXISTS contact_phone varchar(20);
 CREATE UNIQUE INDEX IF NOT EXISTS booking_unique_active_idx ON demo_bookings(student_id, batch_id, booking_time) WHERE status = 'booked';
 CREATE TABLE IF NOT EXISTS leads (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -111,10 +124,18 @@ CREATE TABLE IF NOT EXISTS reviews (
   student_id uuid NOT NULL REFERENCES users(id), center_id uuid NOT NULL REFERENCES centers(id),
   teacher_id uuid REFERENCES teachers(id), booking_id uuid NOT NULL UNIQUE REFERENCES demo_bookings(id),
   rating int NOT NULL CHECK (rating BETWEEN 1 AND 5), review_text text NOT NULL,
+  teaching_clarity_rating int CHECK (teaching_clarity_rating BETWEEN 1 AND 5),
+  doubt_solving_rating int CHECK (doubt_solving_rating BETWEEN 1 AND 5),
+  environment_rating int CHECK (environment_rating BETWEEN 1 AND 5),
+  value_for_money_rating int CHECK (value_for_money_rating BETWEEN 1 AND 5),
   verification_type varchar(20) NOT NULL DEFAULT 'attended_demo',
   moderation_status varchar(20) NOT NULL DEFAULT 'pending' CHECK (moderation_status IN ('pending','approved','rejected')),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS teaching_clarity_rating int CHECK (teaching_clarity_rating BETWEEN 1 AND 5);
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS doubt_solving_rating int CHECK (doubt_solving_rating BETWEEN 1 AND 5);
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS environment_rating int CHECK (environment_rating BETWEEN 1 AND 5);
+ALTER TABLE reviews ADD COLUMN IF NOT EXISTS value_for_money_rating int CHECK (value_for_money_rating BETWEEN 1 AND 5);
 CREATE TABLE IF NOT EXISTS shortlists (
   student_id uuid NOT NULL REFERENCES users(id), center_id uuid NOT NULL REFERENCES centers(id),
   created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (student_id, center_id)
