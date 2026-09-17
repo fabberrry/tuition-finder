@@ -1,36 +1,40 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TuitionLens
 
-## Getting Started
+Tuition discovery marketplace with a Next.js API and PostgreSQL database. The backend follows the TuitionLens PRD and borrows Project Camp API's authenticated, role-based controller pattern.
 
-First, run the development server:
+## Setup
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. Use PostgreSQL 15 or later and create a `tuition_lens` database.
+2. Copy `.env.example` to `.env.local`, set `DATABASE_URL`, and replace `JWT_SECRET` with a random secret of at least 32 characters.
+3. Run `npm install`, `npm run db:migrate`, then `npm run dev`.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+To bootstrap the first admin, register an account through `/api/auth/register`, then promote that known account in the database using `UPDATE users SET role='admin' WHERE email='your-admin@example.com';`. Public registration cannot create an admin.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## API
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+JSON responses use `{ "success": true, "data": ... }` or `{ "success": false, "error": ... }`. Login and registration set an HttpOnly session cookie and also return a bearer token. For cookie-authenticated mutations, send a same-origin `Origin` header. Include `Authorization: Bearer <token>` for mobile or external API clients.
 
-## Learn More
+| Method | Route | Access |
+| --- | --- | --- |
+| GET | `/api/health`, `/api/subjects`, `/api/search/centers` | Public |
+| GET | `/api/centers/:id`, `/api/teachers/:id` | Public, approved content only |
+| POST | `/api/auth/register`, `/api/auth/login` | Public |
+| GET / POST | `/api/auth/me`, `/api/auth/logout` | Signed in |
+| GET / POST / DELETE | `/api/shortlists`, `/api/shortlists`, `/api/shortlists/:centerId` | Student or parent |
+| GET / POST / PATCH | `/api/demo-bookings`, `/api/demo-bookings`, `/api/demo-bookings/:id` | Student or parent; owner can mark attendance |
+| POST | `/api/leads`, `/api/reviews`, `/api/reports` | Student or parent; reports also accept owner/teacher |
+| GET / POST / PUT | `/api/owner/centers`, `/api/owner/centers`, `/api/owner/centers/:id` | Owner |
+| POST | `/api/owner/teachers`, `/api/owner/batches`, `/api/owner/demo-videos` | Owner |
+| PUT | `/api/owner/batches/:id/vacancy` | Owner |
+| GET | `/api/owner/leads`, `/api/owner/demo-bookings`, `/api/owner/analytics` | Owner |
+| PATCH | `/api/owner/leads/:id` | Owner |
+| GET | `/api/admin/moderation`, `/api/admin/reports` | Admin |
+| POST | `/api/admin/subjects`, `/api/admin/approve-listing`, `/api/admin/reject-listing`, `/api/admin/moderate-teacher`, `/api/admin/approve-video`, `/api/admin/moderate-review`, `/api/admin/moderate-report` | Admin |
 
-To learn more about Next.js, take a look at the following resources:
+Create subjects as admin before creating teachers or batches. Owners create a center, add teachers and assign subject IDs, then add batches. Admin approval is required for centers, teachers, videos, and reviews. After approval, the owner activates the center with `PUT /api/owner/centers/:id` and `{ "listingStatus": "active" }`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Search accepts `city`, `locality`, `subject`, `classLevel`, `board`, `exam`, `mode`, `timing`, `vacancy=true`, `maxFee`, `minRating`, `latitude`, `longitude`, `radiusKm`, `limit`, and `offset`. Geographic filtering uses a great-circle calculation over stored coordinates. `radiusKm` requires both coordinates.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Moderation POST bodies use `{ "id": "...", "decision": "approved" }` or `"rejected"`; reports use `"resolved"` or `"dismissed"`. Listing moderation also accepts `featured`. Approved reviews require an attended demo booking. Vacancy changes are audited in `vacancy_audit`, and all admin decisions in `admin_audit`.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Demo videos are stored as URLs; media hosting and delivery are external to this API. Email and SMS notifications are not implemented yet, so the client should use the returned booking state for confirmation.
