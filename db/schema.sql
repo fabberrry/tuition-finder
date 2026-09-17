@@ -55,8 +55,10 @@ CREATE TABLE IF NOT EXISTS teachers (
   name varchar(150) NOT NULL,
   qualification varchar(255), experience_years int CHECK (experience_years >= 0), bio text,
   verification_status varchar(20) NOT NULL DEFAULT 'pending' CHECK (verification_status IN ('pending','approved','rejected')),
+  active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true;
 CREATE TABLE IF NOT EXISTS teacher_subjects (
   teacher_id uuid NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
   subject_id uuid NOT NULL REFERENCES subjects(id),
@@ -87,6 +89,12 @@ CREATE TABLE IF NOT EXISTS vacancy_audit (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   batch_id uuid NOT NULL REFERENCES batches(id), actor_id uuid NOT NULL REFERENCES users(id),
   old_filled int NOT NULL, new_filled int NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS batch_fee_audit (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  batch_id uuid NOT NULL REFERENCES batches(id), actor_id uuid NOT NULL REFERENCES users(id),
+  old_monthly_fee int, new_monthly_fee int,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS demo_videos (
