@@ -89,8 +89,11 @@ CREATE TABLE IF NOT EXISTS vacancy_audit (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   batch_id uuid NOT NULL REFERENCES batches(id), actor_id uuid NOT NULL REFERENCES users(id),
   old_filled int NOT NULL, new_filled int NOT NULL,
+  old_capacity int, new_capacity int,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE vacancy_audit ADD COLUMN IF NOT EXISTS old_capacity int;
+ALTER TABLE vacancy_audit ADD COLUMN IF NOT EXISTS new_capacity int;
 CREATE TABLE IF NOT EXISTS batch_fee_audit (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   batch_id uuid NOT NULL REFERENCES batches(id), actor_id uuid NOT NULL REFERENCES users(id),

@@ -66,6 +66,10 @@ export function requireStudentActor(request: Request) {
   return requireRole(request, ['student', 'parent'])
 }
 
+export function requireOwner(request: Request) {
+  return requireRole(request, ['owner'])
+}
+
 export async function me(request: Request) { return ok(await currentUser(request)) }
 export function logout() {
   const response = ok({ loggedOut: true })
