@@ -8,7 +8,7 @@ Tuition discovery marketplace with a Next.js API and PostgreSQL database. The ba
 2. Copy `.env.example` to `.env.local`, set `DATABASE_URL`, and replace `JWT_SECRET` with a random secret of at least 32 characters.
 3. Run `npm install`, `npm run db:migrate`, then `npm run dev`.
 
-After building, run `npm run test:student` and `npm run test:owner` for API integration checks. Each test creates and removes an isolated PostgreSQL schema and requires permission to create schemas.
+After building, run `npm run test:student`, `npm run test:owner`, and `npm run test:admin` for API integration checks. Each test creates and removes an isolated PostgreSQL schema and requires permission to create schemas.
 
 To bootstrap the first admin, register an account through `/api/auth/register`, then promote that known account in the database using `UPDATE users SET role='admin' WHERE email='your-admin@example.com';`. Public registration cannot create an admin.
 
@@ -34,8 +34,9 @@ JSON responses use `{ "success": true, "data": ... }` or `{ "success": false, "e
 | PUT / GET | `/api/owner/batches/:id/vacancy`, `/api/owner/batches/:id/history` | Owning center only |
 | GET | `/api/owner/leads`, `/api/owner/leads/:id`, `/api/owner/demo-bookings`, `/api/owner/demo-bookings/:id`, `/api/owner/analytics` | Owner, scoped to owned centers |
 | PATCH | `/api/owner/leads/:id` | Owning center only |
-| GET | `/api/admin/moderation`, `/api/admin/reports` | Admin |
+| GET | `/api/admin/moderation`, `/api/admin/reports`, `/api/admin/duplicates`, `/api/admin/audit` | Admin |
 | POST | `/api/admin/subjects`, `/api/admin/approve-listing`, `/api/admin/reject-listing`, `/api/admin/moderate-teacher`, `/api/admin/approve-video`, `/api/admin/moderate-review`, `/api/admin/moderate-report` | Admin |
+| PUT | `/api/admin/centers/:id/featured`, `/api/admin/centers/:id/status`, `/api/admin/users/:id/status` | Admin |
 
 Create subjects as admin before creating teachers or batches. Owners create a center, add teachers and assign subject IDs, then add batches. Admin approval is required for centers, teachers, videos, and reviews. After approval, the owner activates the center with `PUT /api/owner/centers/:id` and `{ "listingStatus": "active" }`.
 
@@ -49,6 +50,12 @@ Student and parent accounts can submit inquiries, save centers, and book demos. 
 
 `GET` list routes accept `limit` (up to 50) and `offset`. Student and parent records are scoped to the authenticated user. `GET` and `PUT /api/student/profile` are reserved for student accounts and store class, board, exam goal, budget, preferred mode, and location. The API uses thin Next.js route handling, shared RBAC helpers, controllers, Zod validators, services, and PostgreSQL query helpers.
 
-Moderation POST bodies use `{ "id": "...", "decision": "approved" }` or `"rejected"`; reports use `"resolved"` or `"dismissed"`. Listing moderation also accepts `featured`. Approved reviews require an attended demo booking. Vacancy changes are audited in `vacancy_audit`, and all admin decisions in `admin_audit`.
+Moderation POST bodies use `{ "id": "...", "decision": "approved" }` or `"rejected"`; reports use `"resolved"` or `"dismissed"`. `/api/admin/approve-listing` requires `approved`, and `/api/admin/reject-listing` requires `rejected`. Items must be pending; a repeated decision returns 409. Centers must be approved before their teachers, and teachers before their videos. Approved reviews require a matching attended demo booking. Notes are optional on moderation decisions.
+
+The moderation queue returns up to 100 pending records per type plus up to 50 duplicate listing candidates. Duplicate candidates match centers in the same city by phone or normalized name and address; review them manually. `GET /api/admin/duplicates`, `/api/admin/reports`, and `/api/admin/audit` accept `limit` (up to 100) and `offset`; reports also accept `status=pending|resolved|dismissed`.
+
+Set a featured listing with `PUT /api/admin/centers/:id/featured` and `{ "featured": true }`. Featuring requires an approved, active listing. Suspend a listing with `PUT /api/admin/centers/:id/status` and `{ "status": "suspended", "notes": "reason" }`; restore it to draft with `status: "draft"`. An owner cannot edit or reactivate a suspended listing. Suspend or restore a non-admin account with `PUT /api/admin/users/:id/status` and `{ "status": "suspended" | "active", "notes": "reason" }`. Suspended accounts lose API access immediately. All these actions are recorded in `admin_audit`; an admin cannot change their own status through this endpoint.
+
+Vacancy changes are audited in `vacancy_audit`.
 
 Demo videos are stored as URLs; media hosting and delivery are external to this API. Email and SMS notifications are not implemented yet, so the client should use the returned booking state for confirmation.
