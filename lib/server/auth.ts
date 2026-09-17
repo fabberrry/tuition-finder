@@ -70,6 +70,10 @@ export function requireOwner(request: Request) {
   return requireRole(request, ['owner'])
 }
 
+export function requireAdmin(request: Request) {
+  return requireRole(request, ['admin'])
+}
+
 export async function me(request: Request) { return ok(await currentUser(request)) }
 export function logout() {
   const response = ok({ loggedOut: true })
