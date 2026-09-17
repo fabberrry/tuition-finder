@@ -8,7 +8,7 @@ Tuition discovery marketplace with a Next.js API and PostgreSQL database. The ba
 2. Copy `.env.example` to `.env.local`, set `DATABASE_URL`, and replace `JWT_SECRET` with a random secret of at least 32 characters.
 3. Run `npm install`, `npm run db:migrate`, then `npm run dev`.
 
-After building, run `npm run test:student` for the student API integration check. It creates and removes an isolated PostgreSQL schema and requires permission to create schemas.
+After building, run `npm run test:student` and `npm run test:owner` for API integration checks. Each test creates and removes an isolated PostgreSQL schema and requires permission to create schemas.
 
 To bootstrap the first admin, register an account through `/api/auth/register`, then promote that known account in the database using `UPDATE users SET role='admin' WHERE email='your-admin@example.com';`. Public registration cannot create an admin.
 
@@ -29,15 +29,19 @@ JSON responses use `{ "success": true, "data": ... }` or `{ "success": false, "e
 | POST | `/api/leads`, `/api/reviews`, `/api/reports` | Student or parent; reports also accept owner/teacher |
 | GET | `/api/leads`, `/api/leads/:id`, `/api/reviews/me`, `/api/reports` | Signed-in actor's own records |
 | GET / PUT | `/api/student/profile` | Student only |
-| GET / POST / PUT | `/api/owner/centers`, `/api/owner/centers`, `/api/owner/centers/:id` | Owner |
-| POST | `/api/owner/teachers`, `/api/owner/batches`, `/api/owner/demo-videos` | Owner |
-| PUT | `/api/owner/batches/:id/vacancy` | Owner |
-| GET | `/api/owner/leads`, `/api/owner/demo-bookings`, `/api/owner/analytics` | Owner |
-| PATCH | `/api/owner/leads/:id` | Owner |
+| GET / POST | `/api/owner/centers`, `/api/owner/teachers`, `/api/owner/batches`, `/api/owner/demo-videos` | Owner |
+| GET / PUT | `/api/owner/centers/:id`, `/api/owner/teachers/:id`, `/api/owner/batches/:id`, `/api/owner/demo-videos/:id` | Owning center only |
+| PUT / GET | `/api/owner/batches/:id/vacancy`, `/api/owner/batches/:id/history` | Owning center only |
+| GET | `/api/owner/leads`, `/api/owner/leads/:id`, `/api/owner/demo-bookings`, `/api/owner/demo-bookings/:id`, `/api/owner/analytics` | Owner, scoped to owned centers |
+| PATCH | `/api/owner/leads/:id` | Owning center only |
 | GET | `/api/admin/moderation`, `/api/admin/reports` | Admin |
 | POST | `/api/admin/subjects`, `/api/admin/approve-listing`, `/api/admin/reject-listing`, `/api/admin/moderate-teacher`, `/api/admin/approve-video`, `/api/admin/moderate-review`, `/api/admin/moderate-report` | Admin |
 
 Create subjects as admin before creating teachers or batches. Owners create a center, add teachers and assign subject IDs, then add batches. Admin approval is required for centers, teachers, videos, and reviews. After approval, the owner activates the center with `PUT /api/owner/centers/:id` and `{ "listingStatus": "active" }`.
+
+Owner list routes accept `limit` (up to 100) and `offset`; teacher, batch, video, lead, and booking lists also accept `centerId`. Leads accept a `status` filter. `GET /api/owner/analytics` accepts an optional `centerId` and returns center, batch, lead, and demo counts. All owner records are checked against the authenticated owner's center IDs; another owner receives 404 for individual records.
+
+Center content edits return the listing to draft and pending verification. Teacher detail or subject edits return the teacher and its videos to moderation. Video edits return the video to moderation. Owners can deactivate teachers with `{ "active": false }` and pause batches with `{ "status": "paused" }`; inactive teachers and paused batches disappear from public discovery. Batch seat changes use `PUT /api/owner/batches/:id/vacancy` with `{ "filledSeats": 4 }`. Capacity and fee changes use `PUT /api/owner/batches/:id`; the history endpoint exposes their audit records. A batch with booked demos cannot be reassigned to another teacher or subject until those bookings are resolved.
 
 Search accepts `city`, `locality`, `subject`, `classLevel`, `board`, `exam`, `mode`, `timing`, `vacancy=true`, `minFee`, `maxFee`, `minRating`, `latitude`, `longitude`, `radiusKm`, `limit`, and `offset`. Results contain one matching batch per center; open the center profile for all its batches. Geographic filtering uses a great-circle calculation over stored coordinates. `radiusKm` requires both coordinates.
 
