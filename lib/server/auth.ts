@@ -62,6 +62,10 @@ export async function requireRole(request: Request, allowed: Role[]) {
   return user
 }
 
+export function requireStudentActor(request: Request) {
+  return requireRole(request, ['student', 'parent'])
+}
+
 export async function me(request: Request) { return ok(await currentUser(request)) }
 export function logout() {
   const response = ok({ loggedOut: true })

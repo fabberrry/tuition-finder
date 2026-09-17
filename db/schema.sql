@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS demo_bookings (
 );
 ALTER TABLE demo_bookings ADD COLUMN IF NOT EXISTS contact_phone varchar(20);
 CREATE UNIQUE INDEX IF NOT EXISTS booking_unique_active_idx ON demo_bookings(student_id, batch_id, booking_time) WHERE status = 'booked';
+CREATE UNIQUE INDEX IF NOT EXISTS booking_one_active_per_batch_idx ON demo_bookings(student_id, batch_id) WHERE status = 'booked';
 CREATE TABLE IF NOT EXISTS leads (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id uuid NOT NULL REFERENCES users(id), center_id uuid NOT NULL REFERENCES centers(id),

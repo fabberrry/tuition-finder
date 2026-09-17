@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import * as discoveryController from '@/controllers/discovery.controller'
+import * as studentController from '@/controllers/student.controller'
 import { login, logout, me, register, requireRole, type User } from './auth'
 import { one, rows, transaction } from './db'
 import { ApiError, body, fail, ok, uuid } from './http'
@@ -14,57 +16,6 @@ const videoInput = z.object({ centerId: id, teacherId: id, subjectId: id, title:
 async function ownedCenter(user: User, centerId: string) {
   const center = await one('SELECT id FROM centers WHERE id=$1 AND owner_id=$2', [centerId,user.id])
   if (!center) throw new ApiError(404, 'Center not found')
-}
-async function publicCenter(centerId: string) {
-  const center = await one('SELECT c.*, (SELECT ROUND(AVG(r.rating)::numeric,2) FROM reviews r WHERE r.center_id=c.id AND r.moderation_status=\'approved\') AS average_rating, (SELECT COUNT(*)::int FROM reviews r WHERE r.center_id=c.id AND r.moderation_status=\'approved\') AS total_reviews FROM centers c WHERE c.id=$1 AND c.verification_status=\'approved\' AND c.listing_status=\'active\'', [centerId])
-  if (!center) throw new ApiError(404, 'Center not found')
-  return center
-}
-async function validBatch(centerId: string, batchId: string) {
-  const batch = await one('SELECT b.* FROM batches b JOIN centers c ON c.id=b.center_id JOIN teachers t ON t.id=b.teacher_id WHERE b.id=$1 AND b.center_id=$2 AND b.status=\'active\' AND t.verification_status=\'approved\' AND c.verification_status=\'approved\' AND c.listing_status=\'active\'', [batchId,centerId])
-  if (!batch) throw new ApiError(404, 'Batch not found')
-  return batch
-}
-
-async function search(request: Request) {
-  const p = new URL(request.url).searchParams
-  const q = z.object({ city: z.string().max(100).optional(), locality: z.string().max(100).optional(), subject: z.string().max(100).optional(), classLevel: z.string().max(20).optional(), board: z.string().max(50).optional(), exam: z.string().max(100).optional(), mode: z.enum(['online','offline','hybrid']).optional(), timing: z.enum(['morning','afternoon','evening']).optional(), vacancy: z.enum(['true','false']).optional(), maxFee: z.coerce.number().int().min(0).optional(), minRating: z.coerce.number().min(0).max(5).optional(), latitude: z.coerce.number().min(-90).max(90).optional(), longitude: z.coerce.number().min(-180).max(180).optional(), radiusKm: z.coerce.number().positive().max(100).optional(), limit: z.coerce.number().int().min(1).max(50).default(20), offset: z.coerce.number().int().min(0).default(0) }).parse(Object.fromEntries(p))
-  if ((q.latitude === undefined) !== (q.longitude === undefined) || (q.radiusKm !== undefined && q.latitude === undefined)) throw new ApiError(422, 'Latitude and longitude are required together')
-  const values: unknown[] = []
-  const add = (value: unknown) => { values.push(value); return `$${values.length}` }
-  const where = ["c.verification_status='approved'", "c.listing_status='active'"]
-  if (q.city) where.push(`c.city ILIKE ${add(q.city)}`)
-  if (q.locality) where.push(`c.locality ILIKE ${add(q.locality)}`)
-  if (q.subject) where.push(`s.name ILIKE ${add(q.subject)}`)
-  if (q.classLevel) where.push(`b.class_level=${add(q.classLevel)}`)
-  if (q.board) where.push(`b.board ILIKE ${add(q.board)}`)
-  if (q.exam) where.push(`b.exam_type ILIKE ${add(q.exam)}`)
-  if (q.mode) where.push(`b.mode=${add(q.mode)}`)
-  if (q.maxFee !== undefined) where.push(`b.monthly_fee<=${add(q.maxFee)}`)
-  if (q.vacancy === 'true') where.push('b.filled_seats<b.capacity')
-  if (q.timing) where.push(`b.start_time ${q.timing === 'morning' ? '<' : q.timing === 'afternoon' ? '>=' : '>='} '${q.timing === 'morning' ? '12:00' : q.timing === 'afternoon' ? '12:00' : '17:00'}'`)
-  if (q.timing === 'afternoon') where.push("b.start_time < '17:00'")
-  const distance = q.latitude !== undefined ? `(6371 * acos(least(1,greatest(-1,cos(radians(${add(q.latitude)}))*cos(radians(c.latitude))*cos(radians(c.longitude)-radians(${add(q.longitude)}))+sin(radians(${add(q.latitude)}))*sin(radians(c.latitude))))))` : 'NULL::double precision'
-  if (q.radiusKm) where.push(`c.latitude IS NOT NULL AND c.longitude IS NOT NULL AND ${distance}<=${add(q.radiusKm)}`)
-  const sql = `WITH matches AS (SELECT c.id,c.name,c.address,c.city,c.locality,c.latitude,c.longitude,c.photos,c.featured,b.id AS batch_id,b.batch_name,b.class_level,b.board,b.start_time,b.end_time,b.mode,b.monthly_fee,b.capacity-b.filled_seats AS vacant_seats,b.vacancy_last_updated_at,s.name AS subject,${distance} AS distance_km FROM centers c JOIN batches b ON b.center_id=c.id AND b.status='active' JOIN teachers t ON t.id=b.teacher_id AND t.verification_status='approved' JOIN subjects s ON s.id=b.subject_id WHERE ${where.join(' AND ')}), ratings AS (SELECT center_id,ROUND(AVG(rating)::numeric,2) AS average_rating,COUNT(*)::int AS total_reviews FROM reviews WHERE moderation_status='approved' GROUP BY center_id) SELECT m.*,COALESCE(r.average_rating,0) AS average_rating,COALESCE(r.total_reviews,0) AS total_reviews FROM matches m LEFT JOIN ratings r ON r.center_id=m.id WHERE COALESCE(r.average_rating,0)>=${add(q.minRating ?? 0)} ORDER BY m.featured DESC,COALESCE(r.average_rating,0) DESC, m.distance_km ASC NULLS LAST,m.vacant_seats DESC,m.id,m.batch_id LIMIT ${add(q.limit)} OFFSET ${add(q.offset)}`
-  return ok(await rows(sql,values))
-}
-
-async function getCenter(centerId: string) {
-  const center = await publicCenter(centerId)
-  const [teachers,batches,videos,reviews] = await Promise.all([
-    rows('SELECT t.id,t.name,t.qualification,t.experience_years,t.bio,t.verification_status,COALESCE(json_agg(DISTINCT s.name) FILTER (WHERE s.id IS NOT NULL),\'[]\') AS subjects FROM teachers t LEFT JOIN teacher_subjects ts ON ts.teacher_id=t.id LEFT JOIN subjects s ON s.id=ts.subject_id WHERE t.center_id=$1 AND t.verification_status=\'approved\' GROUP BY t.id', [centerId]),
-    rows('SELECT b.*,b.capacity-b.filled_seats AS vacant_seats,s.name AS subject,t.name AS teacher_name FROM batches b JOIN subjects s ON s.id=b.subject_id JOIN teachers t ON t.id=b.teacher_id WHERE b.center_id=$1 AND b.status=\'active\' AND t.verification_status=\'approved\' ORDER BY b.start_time', [centerId]),
-    rows('SELECT id,teacher_id,subject_id,title,topic,video_url,duration_seconds,language FROM demo_videos WHERE center_id=$1 AND approval_status=\'approved\'', [centerId]),
-    rows('SELECT r.id,r.rating,r.review_text,r.created_at,u.full_name AS reviewer FROM reviews r JOIN users u ON u.id=r.student_id WHERE r.center_id=$1 AND r.moderation_status=\'approved\' ORDER BY r.created_at DESC LIMIT 50', [centerId]),
-  ])
-  return ok({ ...center,teachers,batches,videos,reviews })
-}
-
-async function getTeacher(teacherId: string) {
-  const teacher = await one('SELECT t.id,t.center_id,t.name,t.qualification,t.experience_years,t.bio,t.verification_status FROM teachers t JOIN centers c ON c.id=t.center_id WHERE t.id=$1 AND t.verification_status=\'approved\' AND c.verification_status=\'approved\' AND c.listing_status=\'active\'', [teacherId])
-  if (!teacher) throw new ApiError(404, 'Teacher not found')
-  return ok({ ...teacher, subjects: await rows('SELECT s.* FROM subjects s JOIN teacher_subjects ts ON ts.subject_id=s.id WHERE ts.teacher_id=$1', [teacherId]), videos: await rows('SELECT id,title,topic,video_url,duration_seconds FROM demo_videos WHERE teacher_id=$1 AND approval_status=\'approved\'', [teacherId]), reviews: await rows('SELECT rating,review_text,created_at FROM reviews WHERE teacher_id=$1 AND moderation_status=\'approved\' ORDER BY created_at DESC LIMIT 30', [teacherId]) })
 }
 
 async function createCenter(request: Request) {
@@ -117,63 +68,13 @@ async function createVideo(request: Request) {
   return ok(await one('INSERT INTO demo_videos(center_id,teacher_id,subject_id,title,topic,video_url,duration_seconds,language) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[v.centerId,v.teacherId,v.subjectId,v.title,v.topic ?? null,v.videoUrl,v.durationSeconds ?? null,v.language ?? null]),201)
 }
 
-async function bookDemo(request: Request) {
-  const user=await requireRole(request,['student','parent'])
-  const v=z.object({ centerId:id,batchId:id,bookingTime:z.iso.datetime({ offset:true }) }).strict().parse(await body(request))
-  if (new Date(v.bookingTime).getTime()<=Date.now()) throw new ApiError(422,'Booking must be in the future')
-  const batch=await validBatch(v.centerId,v.batchId)
-  if (batch.filled_seats>=batch.capacity) throw new ApiError(409,'Batch is full')
-  return ok(await transaction(async client => {
-    const booking=(await client.query('INSERT INTO demo_bookings(student_id,center_id,batch_id,teacher_id,booking_time) VALUES($1,$2,$3,$4,$5) RETURNING *',[user.id,v.centerId,v.batchId,batch.teacher_id,v.bookingTime])).rows[0]
-    await client.query('INSERT INTO leads(student_id,center_id,batch_id,source,status) VALUES($1,$2,$3,\'demo\',\'demo_scheduled\')',[user.id,v.centerId,v.batchId])
-    return booking
-  }),201)
-}
-async function updateBooking(request: Request, bookingId: string) {
-  const user=await requireRole(request,['student','parent','owner'])
-  const v=z.object({ status:z.enum(['booked','cancelled','attended','no_show']), bookingTime:z.iso.datetime({ offset:true }).optional() }).strict().parse(await body(request))
-  const booking=await one('SELECT d.*,c.owner_id FROM demo_bookings d JOIN centers c ON c.id=d.center_id WHERE d.id=$1',[bookingId])
-  if (!booking) throw new ApiError(404,'Booking not found')
-  if (user.role==='owner' ? booking.owner_id!==user.id : booking.student_id!==user.id) throw new ApiError(403,'Insufficient permissions')
-  if (user.role!=='owner' && !['booked','cancelled'].includes(v.status)) throw new ApiError(403,'Only owner can mark attendance')
-  if (booking.status!=='booked') throw new ApiError(409,'Booking is no longer active')
-  if (v.status==='booked' && !v.bookingTime) throw new ApiError(422,'A new booking time is required')
-  if (v.bookingTime && (v.status!=='booked' || new Date(v.bookingTime).getTime()<=Date.now())) throw new ApiError(422,'Invalid reschedule time')
-  if (['attended','no_show'].includes(v.status) && new Date(booking.booking_time).getTime()>Date.now()) throw new ApiError(422,'Demo has not happened yet')
-  return ok(await one('UPDATE demo_bookings SET status=$2,booking_time=COALESCE($3,booking_time) WHERE id=$1 RETURNING *',[bookingId,v.status,v.bookingTime ?? null]))
-}
-async function inquiry(request: Request) {
-  const user=await requireRole(request,['student','parent'])
-  const v=z.object({ centerId:id,batchId:id.optional(), message:text.max(2000) }).strict().parse(await body(request))
-  await publicCenter(v.centerId)
-  if (v.batchId) await validBatch(v.centerId,v.batchId)
-  return ok(await one('INSERT INTO leads(student_id,center_id,batch_id,student_message) VALUES($1,$2,$3,$4) RETURNING *',[user.id,v.centerId,v.batchId ?? null,v.message]),201)
-}
-async function review(request: Request) {
-  const user=await requireRole(request,['student','parent'])
-  const v=z.object({ bookingId:id, rating:z.number().int().min(1).max(5), reviewText:text.max(3000), teacherId:id.optional() }).strict().parse(await body(request))
-  const booking=await one('SELECT * FROM demo_bookings WHERE id=$1 AND student_id=$2 AND status=\'attended\'',[v.bookingId,user.id])
-  if (!booking) throw new ApiError(422,'An attended demo booking is required')
-  if (v.teacherId && v.teacherId!==booking.teacher_id) throw new ApiError(422,'Teacher does not match booking')
-  return ok(await one('INSERT INTO reviews(student_id,center_id,teacher_id,booking_id,rating,review_text) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[user.id,booking.center_id,v.teacherId ?? booking.teacher_id,v.bookingId,v.rating,v.reviewText]),201)
-}
-async function shortlist(request: Request) {
-  const user=await requireRole(request,['student','parent']); const v=z.object({ centerId:id }).strict().parse(await body(request)); await publicCenter(v.centerId)
-  return ok(await one('INSERT INTO shortlists(student_id,center_id) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING *',[user.id,v.centerId]) ?? { student_id:user.id,center_id:v.centerId },201)
-}
-async function report(request: Request) {
-  const user=await requireRole(request,['student','parent','owner','teacher'])
-  const v=z.object({ centerId:id, issueType:z.enum(['vacancy_mismatch','duplicate_listing','misleading_content','other']), details:text.max(3000) }).strict().parse(await body(request))
-  await publicCenter(v.centerId)
-  return ok(await one('INSERT INTO reports(reporter_id,center_id,issue_type,details) VALUES($1,$2,$3,$4) RETURNING *',[user.id,v.centerId,v.issueType,v.details]),201)
-}
 async function ownerLeads(request: Request) {
   const user=await requireRole(request,['owner'])
   return ok(await rows('SELECT l.*,u.full_name AS student_name,u.email AS student_email,u.phone AS student_phone,c.name AS center_name FROM leads l JOIN centers c ON c.id=l.center_id JOIN users u ON u.id=l.student_id WHERE c.owner_id=$1 ORDER BY l.created_at DESC LIMIT 100',[user.id]))
 }
 async function ownerBookings(request: Request) {
   const user=await requireRole(request,['owner'])
-  return ok(await rows('SELECT d.*,u.full_name AS student_name,u.email AS student_email,u.phone AS student_phone FROM demo_bookings d JOIN centers c ON c.id=d.center_id JOIN users u ON u.id=d.student_id WHERE c.owner_id=$1 ORDER BY d.booking_time DESC LIMIT 100',[user.id]))
+  return ok(await rows('SELECT d.*,u.full_name AS student_name,u.email AS student_email,COALESCE(d.contact_phone,u.phone) AS student_phone FROM demo_bookings d JOIN centers c ON c.id=d.center_id JOIN users u ON u.id=d.student_id WHERE c.owner_id=$1 ORDER BY d.booking_time DESC LIMIT 100',[user.id]))
 }
 async function ownerAnalytics(request: Request) {
   const user=await requireRole(request,['owner'])
@@ -224,19 +125,28 @@ async function dispatch(request: Request, path: string[]) {
     if (route==='auth/me' && method==='GET') return me(request)
     if (route==='subjects' && method==='GET') return ok(await rows('SELECT * FROM subjects ORDER BY name,class_level'))
     if (route==='admin/subjects' && method==='POST') { await requireRole(request,['admin']); const v=z.object({ name:text.max(100),classLevel:z.string().max(20).optional(),board:z.string().max(50).optional(),examType:z.string().max(100).optional() }).strict().parse(await body(request)); return ok(await one('INSERT INTO subjects(name,class_level,board,exam_type) VALUES($1,$2,$3,$4) ON CONFLICT (name,class_level,board,exam_type) DO UPDATE SET name=EXCLUDED.name RETURNING *',[v.name,v.classLevel ?? null,v.board ?? null,v.examType ?? null]),201) }
-    if (route==='search/centers' && method==='GET') return search(request)
-    if (route==='centers' && method==='GET') return search(request)
-    if (path[0]==='centers' && path.length===2 && method==='GET') return getCenter(uuid(path[1]))
-    if (path[0]==='teachers' && path.length===2 && method==='GET') return getTeacher(uuid(path[1]))
-    if (route==='demo-bookings' && method==='POST') return bookDemo(request)
-    if (route==='demo-bookings' && method==='GET') { const u=await requireRole(request,['student','parent']); return ok(await rows('SELECT d.*,c.name AS center_name,b.batch_name FROM demo_bookings d JOIN centers c ON c.id=d.center_id JOIN batches b ON b.id=d.batch_id WHERE d.student_id=$1 ORDER BY d.booking_time DESC LIMIT 100',[u.id])) }
-    if (path[0]==='demo-bookings' && path.length===2 && method==='PATCH') return updateBooking(request,uuid(path[1]))
-    if (route==='reviews' && method==='POST') return review(request)
-    if (route==='shortlists' && method==='POST') return shortlist(request)
-    if (route==='shortlists' && method==='GET') { const u=await requireRole(request,['student','parent']); return ok(await rows('SELECT c.* FROM shortlists s JOIN centers c ON c.id=s.center_id WHERE s.student_id=$1 AND c.verification_status=\'approved\' AND c.listing_status=\'active\' ORDER BY s.created_at DESC',[u.id])) }
-    if (path[0]==='shortlists' && path.length===2 && method==='DELETE') { const u=await requireRole(request,['student','parent']); await one('DELETE FROM shortlists WHERE student_id=$1 AND center_id=$2 RETURNING *',[u.id,uuid(path[1])]); return ok({ removed:true }) }
-    if (route==='leads' && method==='POST') return inquiry(request)
-    if (route==='reports' && method==='POST') return report(request)
+    if (route==='search/centers' && method==='GET') return discoveryController.searchCenters(request)
+    if (route==='centers' && method==='GET') return discoveryController.searchCenters(request)
+    if (path[0]==='centers' && path.length===2 && method==='GET') return discoveryController.getCenter(path[1])
+    if (path[0]==='teachers' && path.length===2 && method==='GET') return discoveryController.getTeacher(path[1])
+    if (path[0]==='demo-videos' && path.length===2 && method==='GET') return discoveryController.getVideo(path[1])
+    if (route==='reviews' && method==='GET') return discoveryController.listReviews(request)
+    if (route==='student/profile' && method==='GET') return studentController.getProfile(request)
+    if (route==='student/profile' && method==='PUT') return studentController.putProfile(request)
+    if (route==='demo-bookings' && method==='POST') return studentController.bookDemo(request)
+    if (route==='demo-bookings' && method==='GET') return studentController.listBookings(request)
+    if (path[0]==='demo-bookings' && path.length===2 && method==='GET') return studentController.getBooking(request,path[1])
+    if (path[0]==='demo-bookings' && path.length===2 && method==='PATCH') return studentController.updateBooking(request,path[1])
+    if (route==='reviews' && method==='POST') return studentController.submitReview(request)
+    if (route==='reviews/me' && method==='GET') return studentController.listMyReviews(request)
+    if (route==='shortlists' && method==='POST') return studentController.addShortlist(request)
+    if (route==='shortlists' && method==='GET') return studentController.listShortlists(request)
+    if (path[0]==='shortlists' && path.length===2 && method==='DELETE') return studentController.deleteShortlist(request,path[1])
+    if (route==='leads' && method==='POST') return studentController.sendInquiry(request)
+    if (route==='leads' && method==='GET') return studentController.listInquiries(request)
+    if (path[0]==='leads' && path.length===2 && method==='GET') return studentController.getInquiry(request,path[1])
+    if (route==='reports' && method==='POST') return studentController.sendReport(request)
+    if (route==='reports' && method==='GET') return studentController.listReports(request)
     if (route==='owner/centers' && method==='GET') { const u=await requireRole(request,['owner']); return ok(await rows('SELECT * FROM centers WHERE owner_id=$1 ORDER BY created_at DESC',[u.id])) }
     if (route==='owner/centers' && method==='POST') return createCenter(request)
     if (path[0]==='owner' && path[1]==='centers' && path.length===3 && method==='PUT') return updateCenter(request,uuid(path[2]))
