@@ -34,11 +34,13 @@ CREATE TABLE IF NOT EXISTS centers (
   photos text[] NOT NULL DEFAULT '{}',
   facilities text[] NOT NULL DEFAULT '{}',
   verification_status varchar(20) NOT NULL DEFAULT 'pending' CHECK (verification_status IN ('pending','approved','rejected')),
-  listing_status varchar(20) NOT NULL DEFAULT 'draft' CHECK (listing_status IN ('draft','active','paused')),
+  listing_status varchar(20) NOT NULL DEFAULT 'draft' CHECK (listing_status IN ('draft','active','paused','suspended')),
   featured boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE centers DROP CONSTRAINT IF EXISTS centers_listing_status_check;
+ALTER TABLE centers ADD CONSTRAINT centers_listing_status_check CHECK (listing_status IN ('draft','active','paused','suspended'));
 CREATE INDEX IF NOT EXISTS centers_location_idx ON centers(city, locality);
 CREATE INDEX IF NOT EXISTS centers_public_idx ON centers(verification_status, listing_status);
 CREATE INDEX IF NOT EXISTS centers_owner_idx ON centers(owner_id);

@@ -35,6 +35,7 @@ export async function updateCenter(ownerId: string, centerId: string, input: Cen
   return transaction(async client => {
     const center = (await client.query('SELECT * FROM centers WHERE id=$1 AND owner_id=$2 FOR UPDATE', [centerId,ownerId])).rows[0]
     if (!center) throw new ApiError(404, 'Center not found')
+    if (center.listing_status === 'suspended') throw new ApiError(409, 'Center is suspended by an admin')
     const latitude = input.latitude === undefined ? center.latitude : input.latitude
     const longitude = input.longitude === undefined ? center.longitude : input.longitude
     if ((latitude == null) !== (longitude == null)) throw new ApiError(422, 'Latitude and longitude must be set together')
